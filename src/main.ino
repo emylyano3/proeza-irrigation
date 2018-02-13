@@ -13,33 +13,65 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
 
-#define PARAM_LENGTH 15
+#define PARAM_LENGTH    15
+#define MILLIS          1000
 
 const char* CONFIG_FILE     = "/config.json";
-const uint8_t MAX_IRR_LINES = 5;
+
+struct Controllable {
+  char* name;
+  uint8_t state;
+  uint8_t pin;
+};
+
+struct Readable {
+  char* name;
+  uint8_t state;
+  uint8_t pin;
+};
 
 struct ControlStruct {
-  uint8_t irrLinesState[MAX_IRR_LINES];
-  uint8_t pumpState;
-  uint8_t irrLinesPins[MAX_IRR_LINES];
-  uint8_t pumpPin;
-  uint8_t sensorPin;
-} control = {
-  {0,0,0,0,0},
+  bool running;
+  uint8_t currentLine;
+  uint16_t irrTime; // in seconds
+  long irrLineStartTime; // in millis
+  struct Readable sensor;
+  struct Controllable irrLines[IRR_LINES_COUNT];
+  struct Controllable pump;
+} ctrl = {
+  false,  // not running
+  255,
+  DEFAULT_IRR_TIME,    // 10 minutes
   0,
 #ifdef NODEMCUV2
-  {D2,D3,D4,D5,D12},
-  D13,
-  D14
+  {"Sensor DHT22",0,D0},
+  {{"Línea 1",0,D1},{"Línea 2",0,D2},{"Línea 3",0,D3},{"Línea 4",0,D4},{"Línea 5",0,D5}},
+  {"Bomba sumergible",0,D6}
 #else
-  {2,3,4,5,12},
-  13,
-  14
+  {"Sensor DHT22",0,14},
+  {{"Línea 1",0,2},{"Línea 2",0,3},{"Línea 3",0,4},{"Línea 4",0,5},{"Línea 5",0,12}},
+  {"Bomba sumergible",0,13}
 #endif
 };
 
-// DH_TYPE must be defined via build flags
-DHT sensor(control.sensorPin, DH_TYPE, 16);
+template <class T> void log (T text) {
+  if (LOGGING) {
+    Serial.print("*SW: ");
+    Serial.println(text);
+  }
+}
+
+template <class T, class U> void log (T key, U value) {
+  if (LOGGING) {
+    Serial.print("*SW: ");
+    Serial.print(key);
+    Serial.print(": ");
+    Serial.println(value);
+  }
+}
+
+// DH_TYPE must be defined through build flags
+DHT sensor(ctrl.sensor.pin, DH_TYPE, 16);
 
 char stationName[PARAM_LENGTH * 3 + 4];
 char topicBase[PARAM_LENGTH * 3 + 4];
@@ -58,29 +90,15 @@ WiFiManagerParameter locationParam("location", "Module location", "room", PARAM_
 WiFiManagerParameter typeParam("type", "Module type", "light", PARAM_LENGTH);
 WiFiManagerParameter nameParam("name", "Module name", "ceiling", PARAM_LENGTH);
 
-template <class T> void log (T text) {
-  if (LOGGING) {
-    Serial.print("*SW: ");
-    Serial.println(text);
-  }
-}
-
-template <class T, class U> void log (T key, U value) {
-  if (LOGGING) {
-    Serial.print("*SW: ");
-    Serial.print(key);
-    Serial.print(": ");
-    Serial.println(value);
-  }
-}
 void setup() {
   Serial.begin(115200);
   // Pin settings
-  for (uint8_t i = 0; i < sizeof(control.irrLinesPins); ++i) {
-    pinMode(control.irrLinesPins[i], OUTPUT);
+  // int aux = 4;//sizeof(ctrl.irrLines) - 1;
+  for (int i = 0; i < (IRR_LINES_COUNT - 1) ; ++i) {
+    pinMode(ctrl.irrLines[i].pin, OUTPUT);
   }
-  pinMode(control.pumpPin, OUTPUT);
-  pinMode(control.sensorPin, INPUT);
+  pinMode(ctrl.pump.pin, OUTPUT);
+  pinMode(ctrl.sensor.pin, INPUT);
   
   // Load module config
   loadConfig();
@@ -110,13 +128,6 @@ void setup() {
   mqttClient.setServer(mqttServerParam.getValue(), (uint16_t) port.toInt());
   mqttClient.setCallback(mqttCallback);
   
-  // Pin settings
-  for (uint8_t i = 0; i < sizeof(control.irrLinesPins); ++i) {
-    pinMode(control.irrLinesPins[i], OUTPUT);
-  }
-  pinMode(control.pumpPin, OUTPUT);
-  pinMode(control.sensorPin, INPUT);
-
   // Building topics base
   String buff = String(locationParam.getValue()) + String(F("/")) + String(typeParam.getValue()) + String(F("/")) + String(nameParam.getValue()) + String(F("/"));
   buff.toCharArray(topicBase, buff.length() + 1);
@@ -138,7 +149,66 @@ void loop() {
   if (!mqttClient.connected()) {
     connectBroker();
   }
+  checkSequence();
   mqttClient.loop();
+}
+
+void startSequence() {
+  if (!ctrl.running) {
+    log(F("Starting irrigation sequence"));
+    ctrl.running = true;
+    ctrl.currentLine = 0;
+    ctrl.irrLineStartTime = millis();
+    setState(ctrl.irrLines[ctrl.currentLine], HIGH);
+    delay(200);
+    log(F("Starting"), ctrl.pump.name);
+    setState(ctrl.pump, HIGH);
+  } else {
+    log(F("Irrigation not started, it was already running"));
+  }
+}
+
+void endSequence() {
+  log(F("Ending irrigation sequence"));
+  log(F("Stoping"), ctrl.pump.name);
+  setState(ctrl.pump, LOW);
+  // delay to wait system presure to go down
+  delay(PUMP_DELAY);
+  setState(ctrl.irrLines[ctrl.currentLine], LOW);
+  ctrl.running= false;
+  ctrl.currentLine = 255;
+  ctrl.irrLineStartTime = 0;
+}
+
+void checkSequence() {
+  if (ctrl.running) {
+    if (ctrl.irrLineStartTime + ctrl.irrTime * MILLIS < millis()) {
+      if (ctrl.currentLine == IRR_LINES_COUNT) {
+        endSequence();
+      } else {
+        startNextLine();
+      }
+    }
+  } else {
+    // Just to be safe that pump is not running
+    if (ctrl.pump.state == HIGH) {
+      setState(ctrl.pump, LOW);
+    }
+  }
+}
+
+void startNextLine () {
+  log(F("Irrigation line time ended"), ctrl.irrLines[ctrl.currentLine].name);
+  uint8_t prevLine = ctrl.currentLine++;
+  ctrl.irrLineStartTime = millis();
+  setState(ctrl.irrLines[ctrl.currentLine], HIGH);
+  // delay to wait for actuators
+  delay(ACTUATOR_DELAY);
+  setState(ctrl.irrLines[prevLine], LOW);
+}
+
+void setState (Controllable c, uint8_t state) {
+  c.state = state;
 }
 
 void connectBroker() {
@@ -147,15 +217,42 @@ void connectBroker() {
     log(F("Connecting MQTT broker as"), getStationName());
     if (mqttClient.connect(getStationName())) {
       log(F("Connected"));
+      mqttClient.subscribe(getTopic(new char[getTopicLength("cmd")], "cmd"));
+      mqttClient.subscribe(getTopic(new char[getTopicLength("rst")], "rst"));
+      mqttClient.subscribe(getTopic(new char[getTopicLength("hrst")], "hrst"));
+      mqttClient.subscribe(getTopic(new char[getTopicLength("rtt")], "rtt"));
+      mqttClient.subscribe(getTopic(new char[getTopicLength("echo")], "echo"));
     } else {
-      //TODO Suscribe to topics
-      log(F("Failed. RC:"), mqttClient.state());
+      log(F("Failed. RC"), mqttClient.state());
     }
   }
 }
 
+void mqttCallback(char* topic, unsigned char* payload, unsigned int length) {
+  log(F("mqtt message"), topic);
+  if (String(topic).equals(getTopic(new char[getTopicLength("cmd")], "cmd"))) {
+    processCommand(payload, length);
+  }
+}
+
+void processCommand (unsigned char* payload, unsigned int length) {
+  String cmd = getCommand(payload, length);
+  log(F("Command received"), cmd);
+  cmd.toLowerCase();
+  if (cmd.equals("start")) {
+    startSequence();
+  } else if (cmd.equals("stop")) {
+    endSequence();
+  } 
+}
+
+String getCommand(unsigned char* payload, unsigned int length) {
+  std::string val(reinterpret_cast<char*>(payload), length);
+  return val.c_str();
+}
+
 void loadConfig() {
-//read configuration from FS json
+  //read configuration from FS json
   if (SPIFFS.begin()) {
     if (SPIFFS.exists(CONFIG_FILE)) {
       //file exists, reading and loading
@@ -192,11 +289,6 @@ void loadConfig() {
   }
 }
 
-void mqttCallback(char* topic, unsigned char* payload, unsigned int length) {
-  log(F("mqtt message"), topic);
-  // TODO Process callbacks
-}
-
 /** callback notifying the need to save config */
 void saveConfigCallback () {
   DynamicJsonBuffer jsonBuffer;
@@ -208,7 +300,6 @@ void saveConfigCallback () {
   json["type"] = typeParam.getValue();
   File configFile = SPIFFS.open(CONFIG_FILE, "w");
   if (configFile) {
-    //json.printTo(Serial);
     json.printTo(configFile);
     configFile.close();
   } else {
@@ -248,7 +339,7 @@ char* getTopic(char* topic, const char* wich) {
 }
 
 char* buildStationName () {
-  String buff = String(locationParam.getValue()) + String(F("_")) + String(typeParam.getValue()) + String(F("_")) + String(nameParam.getValue());
+  String buff = String(typeParam.getValue()) + String(F("_")) + String(locationParam.getValue()) + String(F("_")) + String(nameParam.getValue());
   buff.toCharArray(stationName, buff.length() + 1);
   log(F("Station name"), stationName);
   return stationName;
