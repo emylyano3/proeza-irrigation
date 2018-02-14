@@ -41,7 +41,7 @@ struct ControlStruct {
 } ctrl = {
   false,  // not running
   255,
-  DEFAULT_IRR_TIME,    // 10 minutes
+  DEFAULT_IRR_TIME, // defined through build flags
   0,
 #ifdef NODEMCUV2
   {"Sensor DHT22",0,D0},
@@ -56,14 +56,14 @@ struct ControlStruct {
 
 template <class T> void log (T text) {
   if (LOGGING) {
-    Serial.print("*SW: ");
+    Serial.print("*IRR: ");
     Serial.println(text);
   }
 }
 
 template <class T, class U> void log (T key, U value) {
   if (LOGGING) {
-    Serial.print("*SW: ");
+    Serial.print("*IRR: ");
     Serial.print(key);
     Serial.print(": ");
     Serial.println(value);
@@ -85,7 +85,7 @@ ESP8266HTTPUpdateServer httpUpdater;
 long nextBrokerConnAtte = 0;
 
 WiFiManagerParameter mqttServerParam("server", "MQTT Server", "192.168.0.105", 16);
-WiFiManagerParameter mqttPortParam("port", "MQTT Port", "1", 6);
+WiFiManagerParameter mqttPortParam("port", "MQTT Port", "1883", 6);
 WiFiManagerParameter locationParam("location", "Module location", "room", PARAM_LENGTH);
 WiFiManagerParameter typeParam("type", "Module type", "light", PARAM_LENGTH);
 WiFiManagerParameter nameParam("name", "Module name", "ceiling", PARAM_LENGTH);
@@ -93,7 +93,6 @@ WiFiManagerParameter nameParam("name", "Module name", "ceiling", PARAM_LENGTH);
 void setup() {
   Serial.begin(115200);
   // Pin settings
-  // int aux = 4;//sizeof(ctrl.irrLines) - 1;
   for (int i = 0; i < (IRR_LINES_COUNT - 1) ; ++i) {
     pinMode(ctrl.irrLines[i].pin, OUTPUT);
   }
@@ -102,8 +101,8 @@ void setup() {
   
   // Load module config
   loadConfig();
-
-  // WiFi Manager Config  
+  
+  // WiFi Manager Config
   WiFiManager wifiManager;
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setStationNameCallback(buildStationName);
@@ -134,7 +133,7 @@ void setup() {
   log(F("Topics Base"), topicBase);
 
   // OTA Update Stuff
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_STA);
   MDNS.begin(getStationName());
   httpUpdater.setup(&httpServer);
   httpServer.begin();
@@ -159,6 +158,7 @@ void startSequence() {
     ctrl.running = true;
     ctrl.currentLine = 0;
     ctrl.irrLineStartTime = millis();
+    log(F("Starting line"), ctrl.irrLines[ctrl.currentLine].name);
     setState(ctrl.irrLines[ctrl.currentLine], HIGH);
     delay(200);
     log(F("Starting"), ctrl.pump.name);
@@ -169,15 +169,20 @@ void startSequence() {
 }
 
 void endSequence() {
-  log(F("Ending irrigation sequence"));
-  log(F("Stoping"), ctrl.pump.name);
-  setState(ctrl.pump, LOW);
-  // delay to wait system presure to go down
-  delay(PUMP_DELAY);
-  setState(ctrl.irrLines[ctrl.currentLine], LOW);
-  ctrl.running= false;
-  ctrl.currentLine = 255;
-  ctrl.irrLineStartTime = 0;
+  if (ctrl.running) {
+    log(F("Ending irrigation sequence"));
+    log(F("Stoping"), ctrl.pump.name);
+    setState(ctrl.pump, LOW);
+    // delay to wait system presure to go down
+    delay(PUMP_DELAY);
+    log(F("Irrigation line ended"), ctrl.irrLines[ctrl.currentLine].name);
+    setState(ctrl.irrLines[ctrl.currentLine], LOW);
+    ctrl.running= false;
+    ctrl.currentLine = 255;
+    ctrl.irrLineStartTime = 0;
+  } else {
+    log(F("Irrigation not running"));
+  }
 }
 
 void checkSequence() {
@@ -190,7 +195,7 @@ void checkSequence() {
       }
     }
   } else {
-    // Just to be safe that pump is not running
+    // Just to be safe that the pump is not running
     if (ctrl.pump.state == HIGH) {
       setState(ctrl.pump, LOW);
     }
@@ -201,6 +206,7 @@ void startNextLine () {
   log(F("Irrigation line time ended"), ctrl.irrLines[ctrl.currentLine].name);
   uint8_t prevLine = ctrl.currentLine++;
   ctrl.irrLineStartTime = millis();
+  log(F("Starting line"), ctrl.irrLines[ctrl.currentLine].name);
   setState(ctrl.irrLines[ctrl.currentLine], HIGH);
   // delay to wait for actuators
   delay(ACTUATOR_DELAY);
@@ -232,6 +238,16 @@ void mqttCallback(char* topic, unsigned char* payload, unsigned int length) {
   log(F("mqtt message"), topic);
   if (String(topic).equals(getTopic(new char[getTopicLength("cmd")], "cmd"))) {
     processCommand(payload, length);
+  } else if (String(topic).equals(String(getTopic(new char[getTopicLength("rst")], "rst")))) {
+    reset();
+  } else if (String(topic).equals(String(getTopic(new char[getTopicLength("hrst")], "hrst")))) {
+    hardReset();
+  } else if (String(topic).equals(String(getTopic(new char[getTopicLength("rtt")], "rtt")))) {
+    restart();
+  } else if (String(topic).equals(String(getTopic(new char[getTopicLength("echo")], "echo")))) {
+    publishState();
+  } else {
+    log(F("Unknown topic"));
   }
 }
 
@@ -305,6 +321,10 @@ void saveConfigCallback () {
   } else {
     log(F("Failed to open config file for writing"));
   }
+}
+
+void publishState () {
+  mqttClient.publish(getTopic(new char[getTopicLength("state")], "state"), new char[2]{ctrl.running ? '1' : '0', '\0'});
 }
 
 void hardReset () {
