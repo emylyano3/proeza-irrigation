@@ -19,13 +19,13 @@
 const char* CONFIG_FILE     = "/config.json";
 
 struct Controllable {
-  char* name;
+  const char* name;
   uint8_t state;
   uint8_t pin;
 };
 
 struct Readable {
-  char* name;
+  const char* name;
   uint8_t state;
   uint8_t pin;
 };
@@ -57,6 +57,8 @@ struct ControlStruct {
   {"Bomba sumergible",0,13}
 #endif
 };
+
+int b;
 
 template <class T> void log (T text) {
   if (LOGGING) {
