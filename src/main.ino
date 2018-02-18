@@ -114,13 +114,13 @@ void setup() {
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setStationNameCallback(buildStationName);
   wifiManager.setMinimumSignalQuality(30);
+  wifiManager.setConnectTimeout(WIFI_CONN_TIMEOUT);
+  wifiManager.setMaxConnRetries(WIFI_CONN_RETRIES);
   wifiManager.addParameter(&mqttServerParam);
   wifiManager.addParameter(&mqttPortParam);
   wifiManager.addParameter(&locationParam);
   wifiManager.addParameter(&typeParam);
   wifiManager.addParameter(&nameParam);
-  wifiManager.setConnectTimeout(WIFI_CONN_TIMEOUT);
-  wifiManager.setMaxConnRetries(WIFI_CONN_RETRIES);
   if (!wifiManager.autoConnect(("ESP_" + String(ESP.getChipId())).c_str(), "12345678")) {
     log(F("Failed to connect and hit timeout"));
     delay(3000);
