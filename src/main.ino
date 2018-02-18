@@ -113,7 +113,7 @@ void setup() {
   WiFiManager wifiManager;
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setStationNameCallback(buildStationName);
-  wifiManager.setMinimumSignalQuality(30);
+  wifiManager.setMinimumSignalQuality(WIFI_MIN_SIGNAL);
   wifiManager.setConnectTimeout(WIFI_CONN_TIMEOUT);
   wifiManager.setMaxConnRetries(WIFI_CONN_RETRIES);
   wifiManager.addParameter(&mqttServerParam);
