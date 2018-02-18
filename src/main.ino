@@ -40,6 +40,7 @@ struct ControlStruct {
   struct Readable sensor;
   struct Controllable irrLines[IRR_LINES_COUNT];
   struct Controllable pump;
+  struct Readable auxLine;
 } ctrl = {
   false,  // not running
   false,  // not paused
@@ -50,15 +51,15 @@ struct ControlStruct {
 #ifdef NODEMCUV2
   {"Sensor DHT22",0,D0},
   {{"Línea 1",0,D1},{"Línea 2",0,D2},{"Línea 3",0,D3},{"Línea 4",0,D4},{"Línea 5",0,D5}},
-  {"Bomba sumergible",0,D6}
+  {"Bomba sumergible",0,D6},
+  {"Linea sisterna",0,D7}
 #else
   {"Sensor DHT22",0,14},
   {{"Línea 1",0,2},{"Línea 2",0,3},{"Línea 3",0,4},{"Línea 4",0,5},{"Línea 5",0,12}},
-  {"Bomba sumergible",0,13}
+  {"Bomba sumergible",0,13},
+  {"Linea sisterna",0,15}
 #endif
 };
-
-int b;
 
 template <class T> void log (T text) {
   if (LOGGING) {
@@ -118,6 +119,8 @@ void setup() {
   wifiManager.addParameter(&locationParam);
   wifiManager.addParameter(&typeParam);
   wifiManager.addParameter(&nameParam);
+  wifiManager.setConnectTimeout(WIFI_CONN_TIMEOUT);
+  wifiManager.setMaxConnRetries(WIFI_CONN_RETRIES);
   if (!wifiManager.autoConnect(("ESP_" + String(ESP.getChipId())).c_str(), "12345678")) {
     log(F("Failed to connect and hit timeout"));
     delay(3000);
@@ -212,7 +215,7 @@ void endSequence() {
     log(F("Ending irrigation sequence"));
     log(F("Stoping"), ctrl.pump.name);
     setState(ctrl.pump, LOW);
-    // delay to wait system presure to go down
+    // delay to wait for system presure to go down
     delay(PUMP_DELAY);
     log(F("Closing valve"), getCurrentLine().name);
     setState(getCurrentLine(), LOW);
@@ -231,7 +234,7 @@ void pauseSequence() {
     log(F("Stoping"), ctrl.pump.name);
     ctrl.elapsedTime = millis() - ctrl.irrLineStartTime;
     setState(ctrl.pump, LOW);
-    // delay to wait system presure to go down
+    // delay to wait for system presure to go down
     delay(PUMP_DELAY);
     log(F("Closing valve"), getCurrentLine().name);
     setState(getCurrentLine(), LOW);
