@@ -137,7 +137,7 @@ void setup() {
   mqttClient.setCallback(mqttCallback);
   
   // Building topics base
-  String buff = String(locationParam.getValue()) + String(F("/")) + String(typeParam.getValue()) + String(F("/")) + String(nameParam.getValue()) + String(F("/"));
+  String buff = String(typeParam.getValue()) + String(F("/")) + String(locationParam.getValue()) + String(F("/")) + String(nameParam.getValue()) + String(F("/"));
   buff.toCharArray(topicBase, buff.length() + 1);
   log(F("Topics Base"), topicBase);
 
@@ -165,9 +165,9 @@ void checkSequence() {
   if (ctrl.running) {
     if (ctrl.irrLineStartTime + ctrl.irrTime * MILLIS < millis()) {
       if (ctrl.currentLine == IRR_LINES_COUNT - 1) {
-        endSequence();
+        stopSequence();
       } else {
-        startNextLine();
+        changeLine();
       }
     }
   } else {
@@ -180,9 +180,11 @@ void checkSequence() {
 
 void startSequence() {
   if (!ctrl.running) {
-    log(F("Starting irrigation sequence"));
+    log(F("Starting irrigation sequence at line"), getCurrentLine().name);
     ctrl.running = true;
-    ctrl.irrLineStartTime = millis();
+    ctrl.paused = false;
+    ctrl.irrLineStartTime = millis() - ctrl.elapsedTime;
+    ctrl.elapsedTime = 0;
     log(F("Opening valve"), getCurrentLine().name);
     setState(getCurrentLine(), HIGH);
     delay(200);
@@ -193,36 +195,22 @@ void startSequence() {
   }
 }
 
-void restartSequence() {
-  if (!ctrl.running) {
-    log(F("Restarting irrigation sequence at line"), getCurrentLine().name);
-    ctrl.running = true;
-    ctrl.paused = false;
-    ctrl.irrLineStartTime = millis() - ctrl.elapsedTime;
-    ctrl.elapsedTime = 0;
-    log(F("Opening valve"), getCurrentLine().name);
-    setState(getCurrentLine(), HIGH);
-    delay(200);
-    log(F("Restarting"), ctrl.pump.name);
-    setState(ctrl.pump, HIGH);
-  } else {
-    log(F("Irrigation not started, it was already running"));
-  }
-}
-
-void endSequence() {
+void stopSequence() {
   if (ctrl.running || ctrl.paused) {
     log(F("Ending irrigation sequence"));
-    log(F("Stoping"), ctrl.pump.name);
-    setState(ctrl.pump, LOW);
-    // delay to wait for system presure to go down
-    delay(PUMP_DELAY);
-    log(F("Closing valve"), getCurrentLine().name);
-    setState(getCurrentLine(), LOW);
+    if (ctrl.running) {
+      log(F("Stoping"), ctrl.pump.name);
+      setState(ctrl.pump, LOW);
+      // delay to wait for system presure to go down
+      delay(PUMP_DELAY);
+      log(F("Closing valve"), getCurrentLine().name);
+      setState(getCurrentLine(), LOW);
+    }
     ctrl.running = false;
     ctrl.paused = false;
     ctrl.currentLine = 0;
     ctrl.irrLineStartTime = 0;
+    ctrl.elapsedTime = 0;
   } else {
     log(F("Irrigation is not running nor paused"));
   }
@@ -245,7 +233,7 @@ void pauseSequence() {
   }
 }
 
-void startNextLine () {
+void changeLine () {
   uint8_t prevLine = ctrl.currentLine++;
   log(F("Opening valve"), getCurrentLine().name);
   setState(getCurrentLine(), HIGH);
@@ -297,13 +285,9 @@ void processCommand (unsigned char* payload, unsigned int length) {
   log(F("Command received"), cmd);
   cmd.toLowerCase();
   if (cmd.equals("start")) {
-    if (ctrl.paused) {
-      restartSequence();
-    } else {
-      startSequence();
-    }
+    startSequence();
   } else if (cmd.equals("stop")) {
-    endSequence();
+    stopSequence();
   } else if (cmd.equals("pause")) {
     pauseSequence();
   }
