@@ -141,15 +141,53 @@ void setup() {
   buff.toCharArray(topicBase, buff.length() + 1);
   log(F("Topics Base"), topicBase);
 
-  // OTA Update Stuff
   WiFi.mode(WIFI_STA);
-  MDNS.begin(getStationName());
-  httpUpdater.setup(&httpServer);
+
+  // mDNS Service
+  bool mdnsUp;
+  if ((mdnsUp = MDNS.begin(getStationName()))) {
+    log(F("MDNS responder started as"), getStationName());
+    MDNS.addService("http", "tcp", 80);
+  }
   httpServer.begin();
-  MDNS.addService("http", "tcp", 80);
+  
+  // OTA Update Stuff
+  httpUpdater.setup(&httpServer);
   Serial.print(F("HTTPUpdateServer ready! Open http://"));
-  Serial.print(WiFi.localIP().toString());
+  if (mdnsUp) {
+    Serial.print(getStationName());
+    Serial.print(".local");
+  } else {
+    Serial.print(WiFi.localIP().toString());
+  }
   Serial.println(F("/update in your browser"));
+
+  // Handle commands over http request
+  httpServer.on("/start", httpStartSequence);
+  httpServer.on("/stop", httpStopSequence);
+  httpServer.on("/pause", httpPauseSequence);
+  httpServer.on("/echo", httpPublishState);
+  httpServer.on("/hrst", hardReset);
+}
+
+void httpStartSequence() {
+  startSequence();
+  httpServer.send(200, "text/html", "<h1>Irrigation started</h1>");
+}
+
+void httpStopSequence() {
+  stopSequence();
+  httpServer.send(200, "text/html", "<h1>Irrigation stoped</h1>");
+}
+
+void httpPauseSequence() {
+  pauseSequence();
+  httpServer.send(200, "text/html", "<h1>Irrigation paused</h1>");
+}
+
+void httpPublishState() {
+  publishState();
+  httpServer.send(200, "text/html", "<h1>State is: </h1>");
 }
 
 void loop() {
@@ -380,7 +418,7 @@ char* getTopic(char* topic, const char* wich) {
 }
 
 char* buildStationName () {
-  String buff = String(typeParam.getValue()) + String(F("_")) + String(locationParam.getValue()) + String(F("_")) + String(nameParam.getValue());
+  String buff = String(typeParam.getValue()) + String(F("-")) + String(locationParam.getValue()) + String(F("-")) + String(nameParam.getValue());
   buff.toCharArray(stationName, buff.length() + 1);
   log(F("Station name"), stationName);
   return stationName;
