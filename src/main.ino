@@ -107,15 +107,16 @@ void setup() {
   pinMode(ctrl.sensor.pin, INPUT);
   
   // Load module config
-  loadConfig();
+  bool existConfig = loadConfig();
   
   // WiFi Manager Config
   WiFiManager wifiManager;
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setStationNameCallback(buildStationName);
   wifiManager.setMinimumSignalQuality(WIFI_MIN_SIGNAL);
-  wifiManager.setConnectTimeout(WIFI_CONN_TIMEOUT);
-  wifiManager.setMaxConnRetries(WIFI_CONN_RETRIES);
+  if (existConfig) {
+    wifiManager.setConnectTimeout(WIFI_CONN_TIMEOUT);
+  }
   wifiManager.addParameter(&mqttServerParam);
   wifiManager.addParameter(&mqttPortParam);
   wifiManager.addParameter(&locationParam);
@@ -342,7 +343,7 @@ String getCommand(unsigned char* payload, unsigned int length) {
   return val.c_str();
 }
 
-void loadConfig() {
+bool loadConfig() {
   //read configuration from FS json
   if (SPIFFS.begin()) {
     if (SPIFFS.exists(CONFIG_FILE)) {
@@ -363,6 +364,7 @@ void loadConfig() {
             nameParam.update(json["name"]);
             locationParam.update(json["location"]);
             typeParam.update(json["type"]);
+            return true;
           } else {
             log(F("Failed to load json config"));
           }
@@ -378,6 +380,7 @@ void loadConfig() {
   } else {
     log(F("Failed to mount FS"));
   }
+  return false;
 }
 
 /** callback notifying the need to save config */
