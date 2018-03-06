@@ -187,7 +187,13 @@ void httpPauseSequence() {
 
 void httpPublishState() {
   publishState();
-  httpServer.send(200, "text/html", "<h1>State is: </h1>");
+  if (ctrl.running) {
+    httpServer.send(200, "text/html", "<h1>Irrigation running on line " + String(getCurrentLine().name) + "</h1>");
+  } else if (ctrl.paused) {
+    httpServer.send(200, "text/html", "<h1>Irrigation paused on line " + String(getCurrentLine().name) + "</h1>");
+  } else {
+    httpServer.send(200, "text/html", "<h1>Irrigation not running</h1>");
+  }
 }
 
 void loop() {
