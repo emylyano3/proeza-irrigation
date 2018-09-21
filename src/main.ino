@@ -3,7 +3,7 @@
 #include <ESP8266WiFi.h>          //https://github.com/esp8266/Arduino
 
 #include <ESP8266WebServer.h>
-#include <WiFiManager.h>
+#include <ESPConfig.h>
 
 #include <WiFiClient.h>
 #include <ESP8266mDNS.h>
@@ -104,9 +104,9 @@ ESP8266HTTPUpdateServer httpUpdater;
 
 long nextBrokerConnAtte = 0;
 
-WiFiManagerParameter mqttServerParam("server", "MQTT Server", "192.168.0.105", 16);
-WiFiManagerParameter mqttPortParam("port", "MQTT Port", "1883", 6);
-WiFiManagerParameter nameParam("name", "Module name", "ceiling", PARAM_LENGTH);
+ESPConfigParam mqttServerParam(Text, "server", "MQTT Server", "192.168.0.105", PARAM_LENGTH, "required");
+ESPConfigParam mqttPortParam(Text, "port", "MQTT Port", "1883", 6, "required");
+ESPConfigParam nameParam(Text, "name", "Module name", "ceiling", PARAM_LENGTH, "required");
 
 void setup() {
   Serial.begin(115200);
@@ -121,23 +121,19 @@ void setup() {
   bool existConfig = loadConfig();
   
   // WiFi Manager Config
-  WiFiManager wifiManager;
-  wifiManager.setSaveConfigCallback(saveConfigCallback);
-  wifiManager.setStationNameCallback(buildStationName);
-  wifiManager.setMinimumSignalQuality(WIFI_MIN_SIGNAL);
-  if (existConfig) {
-    wifiManager.setConnectTimeout(WIFI_CONN_TIMEOUT);
-  }
-  wifiManager.addParameter(&mqttServerParam);
-  wifiManager.addParameter(&mqttPortParam);
-  wifiManager.addParameter(&nameParam);
-  if (!wifiManager.autoConnect(("ESP_" + String(ESP.getChipId())).c_str(), "12345678")) {
-    log(F("Failed to connect and hit timeout"));
-    delay(3000);
-    //reset and try again, or maybe put it to deep sleep
-    ESP.reset();
-    delay(5000);
-  }
+  ESPConfig moduleConfig;
+  
+  moduleConfig.addParameter(&nameParam);
+  moduleConfig.addParameter(&mqttServerParam);
+  moduleConfig.addParameter(&mqttPortParam);
+  moduleConfig.setConnectionTimeout(WIFI_CONN_TIMEOUT);
+  moduleConfig.setPortalSSID("ESP-Irrigation");
+  moduleConfig.setAPStaticIP(IPAddress(10,10,10,10),IPAddress(IPAddress(10,10,10,10)),IPAddress(IPAddress(255,255,255,0)));
+  moduleConfig.setMinimumSignalQuality(WIFI_MIN_SIGNAL);
+  moduleConfig.setSaveConfigCallback(saveConfigCallback);
+  moduleConfig.setStationNameCallback(buildStationName);
+  moduleConfig.connectWifiNetwork(loadConfig());
+  
   log(F("Connected to wifi network. Local IP"), WiFi.localIP());
   log(F("Configuring MQTT broker"));
   String port = String(mqttPortParam.getValue());
@@ -368,9 +364,9 @@ bool loadConfig() {
           JsonObject& json = jsonBuffer.parseObject(buf.get());
           json.printTo(Serial);
           if (json.success()) {
-            mqttServerParam.update(json["mqtt_server"]);
-            mqttPortParam.update(json["mqtt_port"]);
-            nameParam.update(json["name"]);
+            mqttServerParam.updateValue(json["mqtt_server"]);
+            mqttPortParam.updateValue(json["mqtt_port"]);
+            nameParam.updateValue(json["name"]);
             return true;
           } else {
             log(F("Failed to load json config"));
@@ -414,8 +410,7 @@ void hardReset () {
   log(F("Doing a module hard reset"));
   SPIFFS.format();
   delay(200);
-  WiFiManager wifiManager;
-  wifiManager.resetSettings();
+  WiFi.disconnect();
   delay(200);
   ESP.restart();
   delay(2000);
