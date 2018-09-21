@@ -16,6 +16,8 @@
 #define PARAM_LENGTH    15
 #define MILLIS          1000
 
+using namespace std;
+
 const char* CONFIG_FILE     = "/config.json";
 
 struct Controllable {
@@ -26,6 +28,11 @@ struct Controllable {
 
 struct Readable {
   const char* name;
+  uint8_t state;
+  uint8_t pin;
+};
+
+struct SystemPin {
   uint8_t state;
   uint8_t pin;
 };
@@ -41,6 +48,8 @@ struct ControlStruct {
   struct Controllable irrLines[IRR_LINES_COUNT];
   struct Controllable pump;
   struct Readable auxLine;
+  struct SystemPin reset;
+  struct SystemPin program;
 } ctrl = {
   false,  // not running
   false,  // not paused
@@ -50,14 +59,18 @@ struct ControlStruct {
   0,      // means not started by default
 #ifdef NODEMCUV2
   {"Sensor DHT22",0,D0},
-  {{"Línea 1",0,D1},{"Línea 2",0,D2},{"Línea 3",0,D3},{"Línea 4",0,D4},{"Línea 5",0,D5}},
+  {{"Line 1",0,D1},{"Line 2",0,D2},{"Line 3",0,D3},{"Line 4",0,D4},{"Line 5",0,D5}},
   {"Bomba sumergible",0,D6},
-  {"Linea sisterna",0,D7}
+  {"Linea sisterna",0,D7},
+  {0,D8},
+  {0,D9}
 #else
   {"Sensor DHT22",0,14},
-  {{"Línea 1",0,2},{"Línea 2",0,3},{"Línea 3",0,4},{"Línea 4",0,5},{"Línea 5",0,12}},
+  {{"Line 1",0,2},{"Line 2",0,3},{"Line 3",0,4},{"Line 4",0,5},{"Line 5",0,12}},
   {"Bomba sumergible",0,13},
-  {"Linea sisterna",0,15}
+  {"Linea sisterna",0,15},
+  {0,0},
+  {0,3}
 #endif
 };
 
@@ -93,8 +106,6 @@ long nextBrokerConnAtte = 0;
 
 WiFiManagerParameter mqttServerParam("server", "MQTT Server", "192.168.0.105", 16);
 WiFiManagerParameter mqttPortParam("port", "MQTT Port", "1883", 6);
-WiFiManagerParameter locationParam("location", "Module location", "room", PARAM_LENGTH);
-WiFiManagerParameter typeParam("type", "Module type", "light", PARAM_LENGTH);
 WiFiManagerParameter nameParam("name", "Module name", "ceiling", PARAM_LENGTH);
 
 void setup() {
@@ -119,8 +130,6 @@ void setup() {
   }
   wifiManager.addParameter(&mqttServerParam);
   wifiManager.addParameter(&mqttPortParam);
-  wifiManager.addParameter(&locationParam);
-  wifiManager.addParameter(&typeParam);
   wifiManager.addParameter(&nameParam);
   if (!wifiManager.autoConnect(("ESP_" + String(ESP.getChipId())).c_str(), "12345678")) {
     log(F("Failed to connect and hit timeout"));
@@ -138,7 +147,7 @@ void setup() {
   mqttClient.setCallback(mqttCallback);
   
   // Building topics base
-  String buff = String(typeParam.getValue()) + String(F("/")) + String(locationParam.getValue()) + String(F("/")) + String(nameParam.getValue()) + String(F("/"));
+  String buff = "irrigation/" + String(nameParam.getValue()) + String(F("/"));
   buff.toCharArray(topicBase, buff.length() + 1);
   log(F("Topics Base"), topicBase);
 
@@ -339,7 +348,7 @@ void processCommand (unsigned char* payload, unsigned int length) {
 }
 
 String getCommand(unsigned char* payload, unsigned int length) {
-  std::string val(reinterpret_cast<char*>(payload), length);
+  string val(reinterpret_cast<char*>(payload), length);
   return val.c_str();
 }
 
@@ -353,7 +362,7 @@ bool loadConfig() {
         size_t size = configFile.size();
         if (size > 0) {
           // Allocate a buffer to store contents of the file.
-          std::unique_ptr<char[]> buf(new char[size]);
+          unique_ptr<char[]> buf(new char[size]);
           configFile.readBytes(buf.get(), size);
           DynamicJsonBuffer jsonBuffer;
           JsonObject& json = jsonBuffer.parseObject(buf.get());
@@ -362,8 +371,6 @@ bool loadConfig() {
             mqttServerParam.update(json["mqtt_server"]);
             mqttPortParam.update(json["mqtt_port"]);
             nameParam.update(json["name"]);
-            locationParam.update(json["location"]);
-            typeParam.update(json["type"]);
             return true;
           } else {
             log(F("Failed to load json config"));
@@ -390,8 +397,6 @@ void saveConfigCallback () {
   json["mqtt_server"] = mqttServerParam.getValue();
   json["mqtt_port"] = mqttPortParam.getValue();
   json["name"] = nameParam.getValue();
-  json["location"] = locationParam.getValue();
-  json["type"] = typeParam.getValue();
   File configFile = SPIFFS.open(CONFIG_FILE, "w");
   if (configFile) {
     json.printTo(configFile);
@@ -427,7 +432,7 @@ char* getTopic(char* topic, const char* wich) {
 }
 
 char* buildStationName () {
-  String buff = String(typeParam.getValue()) + String(F("-")) + String(locationParam.getValue()) + String(F("-")) + String(nameParam.getValue());
+  String buff = "irrigation-" + String(nameParam.getValue());
   buff.toCharArray(stationName, buff.length() + 1);
   log(F("Station name"), stationName);
   return stationName;
